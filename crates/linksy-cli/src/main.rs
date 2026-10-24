@@ -1,5 +1,7 @@
 //! `linksy`: command-line front end for the Linksy service.
 
+mod audio;
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -26,6 +28,13 @@ Usage:
   linksy clip <device> [text]        share text to its clipboard (default: stdin)
   linksy open <device> <url>         open a web link in its browser
   linksy ring <device> [--stop]      make it ring so you can find it
+  linksy audio <device>              its outputs and the apps playing, with volumes
+  linksy audio <device> volume <0-100> [--output NAME | --app NAME]
+  linksy audio <device> mute|unmute [--output NAME | --app NAME]
+  linksy audio <device> default <output>
+  linksy audio <device> move <app> <output>
+                                     (volume and mute act on the default output
+                                     unless you name an output or an app)
   linksy locate <phone>              ask a phone where it is (it can say no)
   linksy terminal                    terminals for phones: code set, allowed, running
   linksy terminal code               set the code a phone types to open a terminal here
@@ -257,6 +266,7 @@ async fn run(c: &Client, cmd: &str, rest: &[String]) -> Result<(), String> {
             println!("Ringing {to}. Stop it with: linksy ring {to} --stop");
         }
         ("ring", [to, stop]) if stop == "--stop" => c.ring(to.clone(), false).await.map_err(err)?,
+        ("audio", [device, rest @ ..]) => audio::run(c, device, rest).await?,
         ("locate", [phone]) => {
             println!("Asking {phone} where it is…");
             let l = c.locate(phone.clone()).await.map_err(err)?;
