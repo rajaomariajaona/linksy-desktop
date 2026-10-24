@@ -2810,6 +2810,32 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/libpulse-binding/libpulse-binding-2.30.1.crate",
+        "sha256": "909eb3049e16e373680fe65afe6e2a722ace06b671250cc4849557bc57d6a397",
+        "dest": "cargo/vendor/libpulse-binding-2.30.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"909eb3049e16e373680fe65afe6e2a722ace06b671250cc4849557bc57d6a397\", \"files\": {}}",
+        "dest": "cargo/vendor/libpulse-binding-2.30.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/libpulse-sys/libpulse-sys-1.23.0.crate",
+        "sha256": "d74371848b22e989f829cc1621d2ebd74960711557d8b45cfe740f60d0a05e61",
+        "dest": "cargo/vendor/libpulse-sys-1.23.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"d74371848b22e989f829cc1621d2ebd74960711557d8b45cfe740f60d0a05e61\", \"files\": {}}",
+        "dest": "cargo/vendor/libpulse-sys-1.23.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/link-cplusplus/link-cplusplus-1.0.12.crate",
         "sha256": "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82",
         "dest": "cargo/vendor/link-cplusplus-1.0.12"
@@ -3351,6 +3377,19 @@
         "type": "inline",
         "contents": "{\"package\": \"521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441\", \"files\": {}}",
         "dest": "cargo/vendor/num-conv-0.2.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/num-derive/num-derive-0.4.2.crate",
+        "sha256": "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202",
+        "dest": "cargo/vendor/num-derive-0.4.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202\", \"files\": {}}",
+        "dest": "cargo/vendor/num-derive-0.4.2",
         "dest-filename": ".cargo-checksum.json"
     },
     {

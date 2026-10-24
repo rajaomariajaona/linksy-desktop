@@ -19,6 +19,9 @@ finish-args:
   - --filesystem=xdg-pictures
   # "Use as Webcam": a phone's camera is published as a PipeWire camera for other apps.
   - --filesystem=xdg-run/pipewire-0
+  # Audio for a device that controls it: this computer's outputs and playing apps, and
+  # their volumes (PulseAudio's protocol, which PipeWire speaks through pipewire-pulse).
+  - --socket=pulseaudio
   # The service's notifications: incoming files, pings, pairing codes, with actions.
   - --talk-name=org.freedesktop.Notifications
   # Media controls both ways: this computer's players for the phone, the phone's in GNOME.

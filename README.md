@@ -58,7 +58,8 @@ sudo zypper install --allow-unsigned-rpm ./linksy-0.5.5-1.suse.x86_64.rpm   # op
 tar xzf linksy-0.5.5-linux-x86_64.tar.gz && linksy-0.5.5-linux-x86_64/install.sh  # into ~/.local
 ```
 
-The .deb, .rpm and tarball need x86_64 with glibc 2.39+, GTK 4.14+ and libadwaita 1.5+. The
+The .deb, .rpm and tarball need x86_64 with glibc 2.39+, GTK 4.14+, libadwaita 1.5+ and libpulse
+(the sound server's library, on every desktop with PulseAudio or PipeWire). The
 background service starts with your session; the Flatpak sets that up the first time it opens.
 
 To cut a release: add the version's section to `CHANGELOG.md` and the metainfo's
@@ -72,11 +73,16 @@ Android APKs), on linksy-releases. Flathub builds from the tag with
 
 ## Build
 
-Rust stable (edition 2024). The service, CLI and core build anywhere:
+Rust stable (edition 2024). The service, CLI and core build with only the libpulse headers (the
+service controls volumes through the sound server, PulseAudio or PipeWire):
 
 ```sh
+sudo dnf install pulseaudio-libs-devel     # Fedora
+sudo apt install libpulse-dev              # Debian, Ubuntu
+sudo zypper install libpulse-devel         # openSUSE
 cargo build --release      # linksyd + linksy
 cargo test                 # unit + end-to-end tests
+scripts/test-audio.sh      # audio against a real sound server (a private PulseAudio; needs pulseaudio-utils)
 ```
 
 The GTK app and the screen helper need GTK ≥ 4.14, libadwaita ≥ 1.5 and GStreamer ≥ 1.22

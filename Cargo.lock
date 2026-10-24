@@ -2450,6 +2450,7 @@ checksum = "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
 dependencies = [
  "cc",
 ]
+
 [[package]]
 name = "linksy"
 version = "0.9.3"

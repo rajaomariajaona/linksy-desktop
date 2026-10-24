@@ -19,6 +19,9 @@ Release:        1
 %endif
 Requires:       linksy-common = %{version}-%{release}
 %if 0%{?linksy_suse}
+# The sound server's library, for a device that controls this computer's volumes
+Requires:       libpulse0
+Requires:       gstreamer-plugins-good
 # gtk4paintablesink lives in the Rust plugins bundle on openSUSE
 Requires:       gstreamer-plugins-rs
 %else
@@ -49,6 +52,8 @@ Recommends:     wl-clipboard
 # The camera driver (v4l2loopback-kmp-<flavor>) is left to Finish Setup: it picks the
 # running kernel's flavor, where a fixed Recommends could pull in another kernel.
 %else
+# The sound server's library, for a device that controls this computer's volumes
+Requires:       pulseaudio-libs
 Requires:       gstreamer1-plugins-good
 Requires:       pipewire-gstreamer
 Requires:       xdg-desktop-portal
