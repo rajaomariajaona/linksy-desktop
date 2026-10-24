@@ -45,6 +45,7 @@ Android column from the phone's `docs/android-app.md` (LinkSy-mg/linksy-mobile, 
 | Battery, Ring / Find | Done | Done | §4.5 |
 | The computer's music on the phone | Done | Done | `media_watch`, `media_state`, `media_command` |
 | The phone's music on the computer | Done | Not possible | needs notification-listener access |
+| Volume per output and per app on the computer, from another device | Done (`linksy audio`) | To do | `audio_watch`, `audio_state`, `audio_command` (§4.5) |
 | Pause the computer's media during calls | Done | Done | `call_state`; never a `contact` |
 | Lock when away | Done | Done | `heartbeat`; foreground service |
 | Photo auto-import | Done | Done | one folder the user picks, `YYYY-MM` folders |
@@ -237,6 +238,17 @@ and close the other with reason `duplicate`.
    "length_ms":215000,"can_next":true,"can_previous":true,"can_seek":true,"art":"<base64>"}]}
   {"type":"media_command","player":"spotify","command":{"action":"play_pause"}}
   // actions: play, pause, play_pause, next, previous, seek (+ "position_ms")
+  // Audio: outputs and apps' volumes, both ways (the computer serves it today):
+  {"type":"audio_watch","on":true}               // "send me your audio_state while connected"
+  {"type":"audio_state","seq":1760945000123,"default_sink":"alsa_output.pci-0000_00_1f.3.analog-stereo",
+   "sinks":[{"id":"alsa_output.pci-0000_00_1f.3.analog-stereo","name":"Built-in Audio Analog Stereo",
+   "volume":40,"muted":false,"form_factor":"headphone"}],
+   "streams":[{"id":"57","app":"Firefox","title":"Song","sink":"alsa_output.pci-0000_00_1f.3.analog-stereo",
+   "volume":100,"muted":false,"paused":false}]}
+  {"type":"audio_command","command":{"action":"set_sink_volume","sink":"@DEFAULT_SINK@","volume":30}}
+  // actions: set_sink_volume (+ "sink", "volume"), mute_sink (+ "sink", "muted"),
+  // set_default_sink (+ "sink"), set_stream_volume (+ "stream", "volume"),
+  // mute_stream (+ "stream", "muted"), move_stream (+ "stream", "sink")
   {"type":"call_state","state":"ringing","contact":"Alice"}   // ringing | active | idle
   {"type":"heartbeat_watch","on":true,"every_s":20}            // computer → phone
   {"type":"heartbeat"}                                         // phone → computer, every every_s
@@ -297,6 +309,41 @@ and close the other with reason `duplicate`.
     computer's player (its media notification / page), `{on: false}` when it stops. The
     computer then sends `media_state` on every change while the connection lives, and
     acts on `media_command` for its players.
+
+  **Audio.** What `media_*` does for players, for the sound itself: a device's outputs
+  ("sinks": speakers, headphones, HDMI, a Bluetooth speaker) and the apps playing on them
+  ("streams"), with a volume each. `audio_state` is always the sender's *whole* set, so an
+  output or app missing from it is gone, and `seq` works as for `media_state`.
+  - **Fields.** `volume` is percent: 100 is full scale (0 dB), and a sender that boosts may
+    report more. `default_sink` is the output new sound goes to (a sink `id`, absent when
+    there is none). Sink `id`s are stable while the output exists (on the computer, the
+    sound server's output name, not an index); stream `id`s are stable while the app plays
+    (a new one when it plays again, and they mean nothing to anyone but the sender). Both
+    are opaque strings. `title` is what the app plays, when it says. `paused` marks an app
+    that has its stream open but isn't playing (a paused video); left out, it plays.
+    `form_factor` says what an output is when the sender knows (`speaker`, `headphone`,
+    `headset`, `hdmi`, `tv`…). Every id, name and title is at most 256 bytes with no NUL
+    byte; at most 64 sinks and 256 streams. A receiver drops an `audio_state` or
+    `audio_command` that breaks these (`AudioState::is_valid`, `AudioCommand::is_valid`),
+    and the core refuses to send one.
+  - **Commands.** Volumes in commands are 0 to 100, never more: nobody can make another
+    device louder than full scale (a command above 100 is dropped). Setting a volume keeps
+    the balance between channels (the loudest becomes the value). `sink` may be
+    `"@DEFAULT_SINK@"`, whichever output is the default, so a device that wants one master
+    slider needn't list the outputs first (`move_stream` takes it too). There is no
+    answer to a command and no error: the receiver changes its audio, and a device that
+    watches sees the new `audio_state`. Commands work without `audio_watch`.
+  - **Computer, as the receiver:** on `audio_watch {on: true}` it sends `audio_state` at
+    once, then after each change (settled for 150 ms; nothing is sent when nothing in it
+    differs), until `{on: false}` or the connection ends. It reads PulseAudio, or PipeWire
+    through pipewire-pulse, and only connects to the sound server while somebody watches or
+    a command is running. With no sound server it sends a state with no sinks, and looks
+    again every 10 s while somebody watches. Notification beeps and streams with no volume
+    to set are left out of `streams`. Any paired device may send commands, with the same
+    trust as `ring`: there is no per-device switch for it yet.
+  - **Phone, as the sender (optional):** the phone may serve the same messages for its own
+    volumes (say a sink each for media, ring and alarm, and no streams) so the computer's
+    `linksy audio <phone>` can set them. The desktop uses nothing of it in the app.
 
   **Calls.** Send `call_state` to paired computers that are around when a call starts
   ringing, is answered, and ends (`idle`). The computer pauses whatever plays when it
@@ -628,11 +675,13 @@ hide what a device can't do. Names: `files`, `clipboard`, `open_url`, `battery`,
 controlled), `display`, `camera`, `watch`, `notifications` (mirrors its notifications),
 `sms`, `clipboard_file` (takes `"clipboard":true` offers), `clipboard_watch` (answers
 `clipboard_watch`), `microphone` (shares its microphone), `picture` (sends and shows
-`picture`). Set `Config.features` in the core. A desktop announces all of them,
+`picture`), `audio_state` (shares its audio and takes commands for it), `audio_remote`
+(controls the other's audio). Set `Config.features` in the core. A desktop announces all of them,
 except `clipboard_watch` where its desktop doesn't let apps watch the clipboard (GNOME).
 When a device sends no list (older versions), the desktop assumes everything except, for
 `os == "android"`, `sms`, `notifications`, `media_state`, `control`, `clipboard_file`,
-`clipboard_watch` and `microphone`.
+`clipboard_watch` and `microphone`. (Nothing is assumed of `audio_state` and
+`audio_remote`: only a device that lists them has them.)
 
 ### 4.11 USB cable (desktop 0.5.7)
 
@@ -1071,6 +1120,8 @@ DeviceView.battery: Option<Battery>         // last level each device reported
 node.post_notification(id, RemoteNotification{…})   node.remove_notification(id, key)
 node.send_media_state(id, &MediaState{ seq, players })   node.media_command(id, player, cmd)
 node.watch_media(id, on)                    // Event::MediaState / MediaCommand / MediaWatch
+node.send_audio_state(id, &AudioState{ seq, default_sink, sinks, streams })   node.audio_command(id, AudioCommand::…)
+node.watch_audio(id, on)                    // Event::AudioState / AudioCommand / AudioWatch
 node.send_call_state(id, CallState::Ringing | Active | Idle, contact)
 node.heartbeat(id)                          // Event::HeartbeatWatch { from, on, every_s } says when
 node.sms_threads(id, threads) / node.sms_messages(id, thread, messages, more)   // answers
@@ -1445,14 +1496,25 @@ robust against any encoder (GPU ones may slice too):
   The computer's guide connects it, and a per-phone "use the cable automatically" switch
   (off by default) brings back switching on plug-in. `usb_plugged` / `usb_connect` for the
   phone's own button come in 0.9; nothing to change on the phone yet.
+
 - **2026-10-24** — Private discovery (§4.16) implemented on the desktop for 0.9: the
   `discovery_key` message on every connection to a paired device, the 15-minute tag
   record (HMAC-SHA256, test vector added), the pairing record while the invite dialog is
   open, and the §4.1 record only while a paired device hasn't sent its key. Forgetting a
   device sends the new key to connected devices at once. Phone: send `discovery_key`,
   store the computer's, look for its tag, and announce the same records.
+
 - **2026-10-24** — Desktop 0.9: one prompt for offers from a device that arrive together,
   and **Always Accept** per device (§6, "Receiving files"). No protocol change; the phone
   should send a selection as one offer and mirror the prompt.
+
 - **2026-10-24** — Desktop 0.9: `usb_plugged` and `usb_connect` (§4.11) implemented. Phone:
   show Connect by USB Cable on the computer's page as described there.
+
+- **2026-10-24** — Desktop, next release, nothing required of the phone: audio. New
+  messages `audio_watch`, `audio_state` and `audio_command` (§4.5) and features
+  `audio_state` and `audio_remote` (§4.10): a device's outputs and playing apps with their
+  volumes, and commands for volume, mute, the default output and moving an app. The
+  computer serves them over PulseAudio or PipeWire (`linksy audio <computer>` is the
+  desktop's own client). The phone may later show a computer's mixer, or serve its own
+  volumes the same way.

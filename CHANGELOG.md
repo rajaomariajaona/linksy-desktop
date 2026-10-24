@@ -2,6 +2,24 @@
 
 Linksy for Linux. Each version's section becomes its release notes.
 
+## Unreleased
+
+### Added
+- **Volume per output and per app, from another device.** A paired device can see this
+  computer's audio outputs and the apps playing on them, and change their volume or mute,
+  choose the default output, or move an app to another output (never above 100 %).
+  `linksy audio <device>` does it from the command line:
+  `linksy audio phone`, `linksy audio pc volume 30 --app firefox`,
+  `linksy audio pc move mpv "HDMI"`. It works with PulseAudio and with PipeWire through
+  pipewire-pulse, and only connects to the sound server while it is needed. The protocol
+  is in `docs/protocol.md` (§4.5) for the phone to use as well.
+
+### Changed
+- **The service needs libpulse** (the sound server's library, present on any desktop with
+  PulseAudio or PipeWire): the .deb and .rpm depend on it, the Flatpak gets the PulseAudio
+  socket, and building the service needs its headers (`libpulse-dev`,
+  `pulseaudio-libs-devel`, `libpulse-devel`).
+
 ## 0.9.3
 
 ### Fixed
