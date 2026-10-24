@@ -982,6 +982,8 @@ impl Window {
             | Event::NotificationDismissed { .. } => {}
             // Media players are the service's (MPRIS, so GNOME's own controls show them).
             Event::MediaState { .. } | Event::MediaCommand { .. } | Event::MediaWatch { .. } | Event::CallState { .. } => {}
+            // Audio is the service's too (the sound server's volumes, for other devices to control).
+            Event::AudioState { .. } | Event::AudioCommand { .. } | Event::AudioWatch { .. } => {}
             Event::Heartbeat { .. } | Event::HeartbeatWatch { .. } | Event::ClipboardWatch { .. } | Event::ClipboardFile { .. } => {}
             // Between the service and phones (USB cable, §4.11)
             Event::UsbPlugged { .. } | Event::UsbConnect { .. } => {}
