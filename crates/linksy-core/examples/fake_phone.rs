@@ -5,7 +5,8 @@
 //!
 //! cargo run -p linksy-core --example fake_phone -- --data-dir DIR [--port N] [--name NAME]
 //!     [--battery PERCENT] [--charging] [--notify "TITLE" "BODY"] [--display FILE]
-//!     [--media "TITLE" "ARTIST"] [--watch-media] [--call SECONDS] [--leave-after SECONDS]
+//!     [--media "TITLE" "ARTIST"] [--watch-media] [--watch-audio] [--audio-volume PERCENT]
+//!     [--call SECONDS] [--leave-after SECONDS]
 //!     [--import PATH] [--touchpad] [--files DIR] [--no-discovery] [--seconds N]
 //!
 //! It always answers texting requests from a small made-up inbox. `--files DIR` shares
@@ -14,7 +15,9 @@
 //! `--display FILE` accepts "Use as Second Display" and saves the H.264 it receives.
 //! `--media "TITLE" "ARTIST"` plays a song (as far as the computer can tell);
 //! `--watch-media` prints what the computer plays; `--press play-pause|next|previous`
-//! presses that button on the first player it hears about. `--call SECONDS` rings, answers
+//! presses that button on the first player it hears about. `--watch-audio` prints the
+//! computer's audio outputs and playing apps as they change; `--audio-volume PERCENT` also
+//! sets its default output to that volume, once it has told. `--call SECONDS` rings, answers
 //! two seconds later, and hangs up after that many seconds. It checks in when a computer
 //! asks (lock when away); `--leave-after SECONDS` stops that, as if it walked away.
 //! `--import PATH` imports photos (a file or folder) into the computer's pictures.
@@ -45,6 +48,7 @@ async fn main() {
     let mut notify = None;
     let mut display: Option<std::path::PathBuf> = None;
     let (mut media, mut watch_media) = (None, false);
+    let (mut watch_audio, mut audio_volume) = (false, None::<u8>);
     let mut press: Option<linksy_core::MediaCommand> = None;
     let mut call: Option<u64> = None;
     let mut leave_after: Option<u64> = None;
@@ -73,6 +77,8 @@ async fn main() {
             "--seconds" => seconds = value().parse().expect("--seconds N"),
             "--display" => display = Some(value().into()),
             "--watch-media" => watch_media = true,
+            "--watch-audio" => watch_audio = true,
+            "--audio-volume" => audio_volume = Some(value().parse().expect("--audio-volume PERCENT (0-100)")),
             "--call" => call = Some(value().parse().expect("--call SECONDS")),
             "--import" => import = Some(value().into()),
             "--touchpad" => touchpad = true,
@@ -115,7 +121,7 @@ async fn main() {
     config.port = port;
     config.away = away;
     // What it does, like a phone that says so (Locate shows only then).
-    config.features = ["files", "clipboard", "open_url", "battery", "ring", "media_remote", "call_state", "heartbeat", "import", "fs", "input", "screen", "camera", "display", "watch", "locate"].map(String::from).to_vec();
+    config.features = ["files", "clipboard", "open_url", "battery", "ring", "media_remote", "audio_remote", "call_state", "heartbeat", "import", "fs", "input", "screen", "camera", "display", "watch", "locate"].map(String::from).to_vec();
     config.relay = Some(std::env::var("LINKSY_RELAY").unwrap_or_else(|_| "https://linksy-relay.diary.mg".into()));
     let node = Node::start(config).await.expect("start");
     let mut events = node.subscribe();
@@ -271,6 +277,9 @@ async fn main() {
         if watch_media {
             let _ = node.watch_media(&t.device.id, true).await;
         }
+        if watch_audio || audio_volume.is_some() {
+            let _ = node.watch_audio(&t.device.id, true).await;
+        }
     }
     if let Some(root) = files {
         let mut calls = node.incoming_fs().expect("file requests");
@@ -404,6 +413,22 @@ async fn main() {
                             _ => !playing,
                         };
                         let _ = node.send_media_state(&from.id, &song(title, artist, playing)).await;
+                    }
+                }
+                Ok(Event::AudioState { from, state }) => {
+                    for sink in &state.sinks {
+                        let default = if state.default_sink.as_deref() == Some(sink.id.as_str()) { " (default)" } else { "" };
+                        println!("{} output: {} {}%{}{default}", from.name, sink.name, sink.volume, if sink.muted { " muted" } else { "" });
+                    }
+                    for stream in &state.streams {
+                        println!("{} app: {} {}% on {}{}", from.name, stream.app, stream.volume, stream.sink, if stream.muted { " muted" } else { "" });
+                    }
+                    if state.sinks.is_empty() {
+                        println!("{} has no audio outputs", from.name);
+                    }
+                    if let Some(volume) = audio_volume.take() {
+                        let command = linksy_core::AudioCommand::SetSinkVolume { sink: linksy_core::protocol::DEFAULT_SINK.into(), volume };
+                        println!("setting {}'s default output to {volume}%: {:?}", from.name, node.audio_command(&from.id, command).await);
                     }
                 }
                 Ok(Event::MediaState { from, state }) => {
