@@ -28,7 +28,7 @@ use crate::identity::{DeviceInfo, DeviceKind, Fingerprint, Identity};
 use crate::fs::FsCall;
 use crate::invite::{self, Invite};
 use crate::settings::Settings;
-use crate::protocol::{AudioCommand, AudioState, Battery, CallState, FsRequest, MediaCommand, MediaState, PluggedPhone, RemoteNotification, SmsMessage, SmsThread};
+use crate::protocol::{AudioCommand, AudioState, Battery, CallState, FsRequest, MediaCommand, MediaState, PluggedPhone, RemoteNotification, SmsMessage, SmsThread, Intent,read_msg, write_msg, read_value, Message, TransferMsg, SessionMsg, SessionKind, Handshake, RejectReason, FileEntry, PROTOCOL_VERSION};
 use crate::transfer::{self, Progress};
 use crate::trust::{TrustStore, TrustedDevice};
 use crate::tls;
