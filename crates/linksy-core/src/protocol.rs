@@ -314,6 +314,12 @@ pub enum Message {
     MediaCommand { player: String, command: MediaCommand },
     /// Start (or stop) sending `media_state` to the sender while connected.
     MediaWatch { on: bool },
+    /// The sender's audio outputs and the apps playing on them, sent when it changes.
+    AudioState(AudioState),
+    /// Change the receiver's audio: an output's or an app's volume, mute, or where it plays.
+    AudioCommand { command: AudioCommand },
+    /// Start (or stop) sending `audio_state` to the sender while connected.
+    AudioWatch { on: bool },
     /// The sender (a phone) has a call coming in, going on, or none any more.
     CallState {
         state: CallState,
@@ -512,6 +518,113 @@ pub enum MediaCommand {
     Seek { position_ms: u64 },
 }
 
+/// Longest id, name or title in an audio message, in bytes.
+pub const MAX_AUDIO_TEXT: usize = 256;
+/// Most outputs, and most playing apps, one `audio_state` may list.
+pub const MAX_AUDIO_SINKS: usize = 64;
+pub const MAX_AUDIO_STREAMS: usize = 256;
+
+/// The id that stands for whichever output is the default, so a device that only wants a
+/// master volume needn't list the outputs first.
+pub const DEFAULT_SINK: &str = "@DEFAULT_SINK@";
+
+/// A device's audio, as a whole: its outputs and the apps playing on them. A later `seq`
+/// replaces an earlier one (messages can arrive out of order), and an output or app
+/// missing from it has gone. `seq` is the time it was taken, in milliseconds since 1970.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioState {
+    pub seq: u64,
+    /// The output new sound goes to, when there is one (an [`AudioSink::id`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_sink: Option<String>,
+    pub sinks: Vec<AudioSink>,
+    /// The apps playing, each on one of the `sinks`.
+    #[serde(default)]
+    pub streams: Vec<AudioStream>,
+}
+
+/// One audio output: speakers, headphones, HDMI, a Bluetooth speaker…
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioSink {
+    /// Stable on the sender for as long as the output exists, for commands.
+    pub id: String,
+    /// What to show the user.
+    pub name: String,
+    /// Percent: 100 is full scale (0 dB). A sender may report more when it boosts.
+    pub volume: u16,
+    pub muted: bool,
+    /// What it is, when the sender knows: `speaker`, `headphone`, `headset`, `hdmi`, `tv`…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_factor: Option<String>,
+}
+
+/// One app playing sound.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioStream {
+    /// Stable while the app plays, for commands; a new one when it plays again.
+    pub id: String,
+    /// The app ("Firefox").
+    pub app: String,
+    /// What it plays, when it says ("Song – Band").
+    #[serde(default)]
+    pub title: String,
+    /// The output it plays on (an [`AudioSink::id`]).
+    pub sink: String,
+    pub volume: u16,
+    pub muted: bool,
+    /// The app has the stream open but isn't playing now (a paused video). Left out, it
+    /// plays.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused: bool,
+}
+
+/// Volumes in commands are percent, 0 to 100: nobody can make another device louder than
+/// full scale.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum AudioCommand {
+    /// An output's volume. `sink` is an [`AudioSink::id`], or [`DEFAULT_SINK`].
+    SetSinkVolume { sink: String, volume: u8 },
+    MuteSink { sink: String, muted: bool },
+    /// Send new sound to this output from now on.
+    SetDefaultSink { sink: String },
+    /// An app's volume, `stream` being an [`AudioStream::id`].
+    SetStreamVolume { stream: String, volume: u8 },
+    MuteStream { stream: String, muted: bool },
+    /// Play an app on another output (`sink` as above, [`DEFAULT_SINK`] included).
+    MoveStream { stream: String, sink: String },
+}
+
+fn audio_text_ok(text: &str) -> bool {
+    // A NUL ends a C string early; the sound server's library would trip over one.
+    text.len() <= MAX_AUDIO_TEXT && !text.contains('\0')
+}
+
+impl AudioState {
+    /// Within the limits the protocol sets (counts, lengths, no NUL bytes). Receivers drop
+    /// a state that isn't; senders keep to them.
+    pub fn is_valid(&self) -> bool {
+        self.sinks.len() <= MAX_AUDIO_SINKS
+            && self.streams.len() <= MAX_AUDIO_STREAMS
+            && self.default_sink.as_deref().is_none_or(audio_text_ok)
+            && self.sinks.iter().all(|s| audio_text_ok(&s.id) && audio_text_ok(&s.name) && s.form_factor.as_deref().is_none_or(audio_text_ok))
+            && self.streams.iter().all(|s| audio_text_ok(&s.id) && audio_text_ok(&s.app) && audio_text_ok(&s.title) && audio_text_ok(&s.sink))
+    }
+}
+
+impl AudioCommand {
+    /// Volumes at most 100, ids within the limits and free of NUL bytes.
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::SetSinkVolume { sink, volume } => *volume <= 100 && audio_text_ok(sink),
+            Self::SetStreamVolume { stream, volume } => *volume <= 100 && audio_text_ok(stream),
+            Self::MuteSink { sink, .. } | Self::SetDefaultSink { sink } => audio_text_ok(sink),
+            Self::MuteStream { stream, .. } => audio_text_ok(stream),
+            Self::MoveStream { stream, sink } => audio_text_ok(stream) && audio_text_ok(sink),
+        }
+    }
+}
+
 /// A notification mirrored from another device (a phone's WhatsApp message…).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteNotification {
@@ -616,5 +729,74 @@ mod tests {
         read_control_frames(&bytes[..], |m| got.push(m));
         assert_eq!(got, msgs);
         assert_eq!(serde_json::to_string(&msgs[1]).unwrap(), r#"{"type":"button","button":"right","pressed":true}"#);
+    }
+
+    fn headphones() -> AudioState {
+        AudioState {
+            seq: 1_760_945_000_123,
+            default_sink: Some("alsa_output.pci-0000_00_1f.3.analog-stereo".into()),
+            sinks: vec![AudioSink {
+                id: "alsa_output.pci-0000_00_1f.3.analog-stereo".into(),
+                name: "Built-in Audio Analog Stereo".into(),
+                volume: 40,
+                muted: false,
+                form_factor: Some("headphone".into()),
+            }],
+            streams: vec![AudioStream {
+                id: "57".into(),
+                app: "Firefox".into(),
+                title: "Song".into(),
+                sink: "alsa_output.pci-0000_00_1f.3.analog-stereo".into(),
+                volume: 100,
+                muted: true,
+                paused: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn audio_messages_have_the_documented_shape() {
+        let state = serde_json::to_string(&Message::AudioState(headphones())).unwrap();
+        assert!(state.starts_with(r#"{"type":"audio_state","seq":1760945000123,"default_sink":"alsa_output"#), "{state}");
+        assert!(state.contains(r#""form_factor":"headphone""#) && state.contains(r#""streams":[{"id":"57","app":"Firefox""#) && state.contains(r#""paused":true"#), "{state}");
+        assert_eq!(serde_json::from_str::<Message>(&state).unwrap(), Message::AudioState(headphones()));
+
+        let cmd = Message::AudioCommand { command: AudioCommand::SetSinkVolume { sink: DEFAULT_SINK.into(), volume: 30 } };
+        assert_eq!(serde_json::to_string(&cmd).unwrap(), r#"{"type":"audio_command","command":{"action":"set_sink_volume","sink":"@DEFAULT_SINK@","volume":30}}"#);
+        let moved = r#"{"type":"audio_command","command":{"action":"move_stream","stream":"57","sink":"hdmi"}}"#;
+        assert_eq!(
+            serde_json::from_str::<Message>(moved).unwrap(),
+            Message::AudioCommand { command: AudioCommand::MoveStream { stream: "57".into(), sink: "hdmi".into() } }
+        );
+        assert_eq!(serde_json::to_string(&Message::AudioWatch { on: true }).unwrap(), r#"{"type":"audio_watch","on":true}"#);
+        // A phone may leave out what it hasn't got: no default output, no apps, no form factor.
+        let bare = r#"{"type":"audio_state","seq":5,"sinks":[{"id":"music","name":"Media","volume":60,"muted":false}]}"#;
+        let Message::AudioState(got) = serde_json::from_str(bare).unwrap() else { panic!("not an audio_state") };
+        assert!(got.is_valid() && got.default_sink.is_none() && got.streams.is_empty() && got.sinks[0].form_factor.is_none());
+    }
+
+    #[test]
+    fn audio_limits_are_enforced() {
+        assert!(headphones().is_valid());
+        let set = |volume| AudioCommand::SetStreamVolume { stream: "1".into(), volume };
+        assert!(set(100).is_valid() && set(0).is_valid());
+        assert!(!set(101).is_valid(), "nobody makes another device louder than full scale");
+        let long = "x".repeat(MAX_AUDIO_TEXT + 1);
+        assert!(!AudioCommand::MuteSink { sink: long.clone(), muted: true }.is_valid());
+        assert!(!AudioCommand::SetDefaultSink { sink: "a\0b".into() }.is_valid(), "a NUL byte breaks C strings");
+        assert!(!AudioCommand::MoveStream { stream: "1".into(), sink: "a\0".into() }.is_valid());
+
+        let mut state = headphones();
+        state.streams[0].title = long;
+        assert!(!state.is_valid());
+        let mut state = headphones();
+        state.sinks[0].name = "Speakers\0".into();
+        assert!(!state.is_valid());
+        let mut state = headphones();
+        state.streams = vec![state.streams[0].clone(); MAX_AUDIO_STREAMS + 1];
+        assert!(!state.is_valid());
+        let mut state = headphones();
+        state.sinks = vec![state.sinks[0].clone(); MAX_AUDIO_SINKS + 1];
+        assert!(!state.is_valid());
     }
 }

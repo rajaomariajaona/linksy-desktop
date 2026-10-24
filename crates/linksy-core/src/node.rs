@@ -28,10 +28,7 @@ use crate::identity::{DeviceInfo, DeviceKind, Fingerprint, Identity};
 use crate::fs::FsCall;
 use crate::invite::{self, Invite};
 use crate::settings::Settings;
-use crate::protocol::{Battery, CallState, PluggedPhone, FsRequest, SmsMessage, SmsThread, MediaCommand, MediaState, RemoteNotification, 
-    FileEntry, Handshake, Intent, Message, PROTOCOL_VERSION, RejectReason, SessionKind, SessionMsg, TransferMsg, read_msg,
-    read_value, write_msg,
-};
+use crate::protocol::{AudioCommand, AudioState, Battery, CallState, FsRequest, MediaCommand, MediaState, PluggedPhone, RemoteNotification, SmsMessage, SmsThread};
 use crate::transfer::{self, Progress};
 use crate::trust::{TrustStore, TrustedDevice};
 use crate::tls;
@@ -169,6 +166,13 @@ pub enum Event {
     MediaCommand { from: DeviceInfo, player: String, command: MediaCommand },
     /// A device wants this one's `media_state` while connected (`on`), or no longer.
     MediaWatch { from: DeviceInfo, on: bool },
+    /// A device's audio outputs and playing apps, newest snapshot (older ones are dropped
+    /// here).
+    AudioState { from: DeviceInfo, state: AudioState },
+    /// A device asks to change this device's audio. Already within the protocol's limits.
+    AudioCommand { from: DeviceInfo, command: AudioCommand },
+    /// A device wants this one's `audio_state` while connected (`on`), or no longer.
+    AudioWatch { from: DeviceInfo, on: bool },
     /// A phone's call: ringing, answered, or over.
     CallState { from: DeviceInfo, state: CallState, contact: Option<String> },
     /// A device checked in ("still here").
@@ -415,6 +419,8 @@ struct Inner {
     batteries: Mutex<HashMap<Fingerprint, Battery>>,
     /// The newest media snapshot `seq` seen from each device.
     media_seq: Mutex<HashMap<Fingerprint, u64>>,
+    /// The same for audio snapshots.
+    audio_seq: Mutex<HashMap<Fingerprint, u64>>,
     /// Away from home, when on (docs/protocol.md §4.13).
     away: Mutex<Option<Arc<crate::away::Away>>>,
 }
@@ -466,6 +472,7 @@ impl Node {
                 import_dir: Mutex::default(),
                 batteries: Mutex::default(),
                 media_seq: Mutex::default(),
+                audio_seq: Mutex::default(),
                 sessions: Mutex::new(Some(sessions)),
                 sessions_tx,
                 fs: Mutex::new(Some(fs)),
@@ -848,6 +855,29 @@ impl Node {
     /// Ask a device for its media players while connected (`on`), or stop.
     pub async fn watch_media(&self, to: &Fingerprint, on: bool) -> Result<()> {
         self.send_message(to, &Message::MediaWatch { on }).await
+    }
+
+    /// Send this device's audio outputs and playing apps (the whole set; bump `seq` each
+    /// time). Fails when it breaks the protocol's limits ([`AudioState::is_valid`]).
+    pub async fn send_audio_state(&self, to: &Fingerprint, state: &AudioState) -> Result<()> {
+        if !state.is_valid() {
+            return Err(invalid("audio state is too large"));
+        }
+        self.send_message(to, &Message::AudioState(state.clone())).await
+    }
+
+    /// Change another device's audio. Fails when the command breaks the protocol's limits
+    /// ([`AudioCommand::is_valid`]): volumes go to 100, no further.
+    pub async fn audio_command(&self, to: &Fingerprint, command: AudioCommand) -> Result<()> {
+        if !command.is_valid() {
+            return Err(invalid("bad audio command"));
+        }
+        self.send_message(to, &Message::AudioCommand { command }).await
+    }
+
+    /// Ask a device for its audio while connected (`on`), or stop.
+    pub async fn watch_audio(&self, to: &Fingerprint, on: bool) -> Result<()> {
+        self.send_message(to, &Message::AudioWatch { on }).await
     }
 
     /// Tell a device about a call on this one (phones), so it can pause its media.
@@ -1563,6 +1593,24 @@ impl Node {
                                 }
                                 Ok(Message::MediaCommand { player, command }) => node.emit(Event::MediaCommand { from, player, command }),
                                 Ok(Message::MediaWatch { on }) => node.emit(Event::MediaWatch { from, on }),
+                                Ok(Message::AudioState(state)) if state.is_valid() => {
+                                    let newer = {
+                                        let mut seqs = node.inner.audio_seq.lock().unwrap();
+                                        let last = seqs.entry(from.id).or_insert(0);
+                                        let newer = state.seq > *last;
+                                        if newer {
+                                            *last = state.seq;
+                                        }
+                                        newer
+                                    };
+                                    if newer {
+                                        node.emit(Event::AudioState { from, state });
+                                    }
+                                }
+                                Ok(Message::AudioState(_)) => debug!("bad audio state from {}", from.name),
+                                Ok(Message::AudioCommand { command }) if command.is_valid() => node.emit(Event::AudioCommand { from, command }),
+                                Ok(Message::AudioCommand { .. }) => debug!("bad audio command from {}", from.name),
+                                Ok(Message::AudioWatch { on }) => node.emit(Event::AudioWatch { from, on }),
                                 Ok(Message::CallState { state, contact }) => node.emit(Event::CallState { from, state, contact }),
                                 Ok(Message::Heartbeat) => node.emit(Event::Heartbeat { from }),
                                 Ok(Message::ClipboardWatch { on }) => node.emit(Event::ClipboardWatch { from, on }),

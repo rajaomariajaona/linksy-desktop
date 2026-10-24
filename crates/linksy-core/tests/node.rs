@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use linksy_core::{Battery, CallState, Config, ControlMsg, FsEntry, FsRequest, SmsThread, Error, Event, MediaCommand, MediaPlayer, MediaState, Node, NotificationButton, RemoteNotification, SessionKind};
+use linksy_core::{AudioCommand, AudioSink, AudioState, AudioStream, Battery, CallState, Config, ControlMsg, FsEntry, FsRequest, SmsThread, Error, Event, MediaCommand, MediaPlayer, MediaState, Node, NotificationButton, RemoteNotification, SessionKind};
 use tokio::io::AsyncReadExt;
 use tempfile::TempDir;
 use tokio::sync::broadcast;
@@ -495,6 +495,59 @@ async fn media_state_keeps_the_newest_and_commands_arrive() {
     assert_eq!(every, 5, "no faster than every 5 s");
     phone.node.heartbeat(&pc_id).await.unwrap();
     wait_for(&mut on_pc, |e| matches!(e, Event::Heartbeat { .. }).then_some(())).await;
+}
+
+#[tokio::test]
+async fn audio_state_keeps_the_newest_and_commands_arrive_within_limits() {
+    let (phone, pc) = paired().await;
+    let mut on_pc = pc.node.subscribe();
+    let mut on_phone = phone.node.subscribe();
+    let (pc_id, phone_id) = (pc.node.info().id, phone.node.info().id);
+    let speakers = |seq: u64, volume: u16| AudioState {
+        seq,
+        default_sink: Some("speakers".into()),
+        sinks: vec![AudioSink { id: "speakers".into(), name: "Speakers".into(), volume, muted: false, form_factor: Some("speaker".into()) }],
+        streams: vec![AudioStream { id: "7".into(), app: "Firefox".into(), title: String::new(), sink: "speakers".into(), volume: 100, muted: false, paused: false }],
+    };
+    // The computer shares its audio; the newest snapshot wins and a late, older one is dropped.
+    pc.node.send_audio_state(&phone_id, &speakers(20, 40)).await.unwrap();
+    let got = wait_for(&mut on_phone, |e| match e {
+        Event::AudioState { state, .. } => Some(state.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(got, speakers(20, 40));
+    pc.node.send_audio_state(&phone_id, &speakers(10, 99)).await.unwrap();
+    pc.node.send_audio_state(&phone_id, &speakers(30, 55)).await.unwrap();
+    let next = wait_for(&mut on_phone, |e| match e {
+        Event::AudioState { state, .. } => Some((state.seq, state.sinks[0].volume)),
+        _ => None,
+    })
+    .await;
+    assert_eq!(next, (30, 55));
+
+    // The phone's commands arrive, and nothing louder than full scale is ever sent.
+    let command = AudioCommand::SetStreamVolume { stream: "7".into(), volume: 100 };
+    phone.node.audio_command(&pc_id, command.clone()).await.unwrap();
+    let heard = wait_for(&mut on_pc, |e| match e {
+        Event::AudioCommand { command, .. } => Some(command.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(heard, command);
+    assert!(phone.node.audio_command(&pc_id, AudioCommand::SetStreamVolume { stream: "7".into(), volume: 101 }).await.is_err());
+    assert!(phone.node.audio_command(&pc_id, AudioCommand::MuteSink { sink: "a\0b".into(), muted: true }).await.is_err());
+
+    // Watching starts and stops by asking.
+    phone.node.watch_audio(&pc_id, true).await.unwrap();
+    wait_for(&mut on_pc, |e| matches!(e, Event::AudioWatch { on: true, .. }).then_some(())).await;
+    phone.node.watch_audio(&pc_id, false).await.unwrap();
+    wait_for(&mut on_pc, |e| matches!(e, Event::AudioWatch { on: false, .. }).then_some(())).await;
+
+    // A state beyond the protocol's limits is refused before it is sent.
+    let mut huge = speakers(40, 10);
+    huge.streams = vec![huge.streams[0].clone(); 1000];
+    assert!(pc.node.send_audio_state(&phone_id, &huge).await.is_err());
 }
 
 #[tokio::test]
