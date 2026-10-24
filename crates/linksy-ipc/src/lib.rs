@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use linksy_core::{DeviceInfo, DeviceView, Direction, Event, Fingerprint, RemoteNotification, SessionKind, Settings, SmsMessage, SmsThread, Uuid};
+use linksy_core::{AudioCommand, AudioState, DeviceInfo, DeviceView, Direction, Event, Fingerprint, RemoteNotification, SessionKind, Settings, SmsMessage, SmsThread, Uuid};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,6 +68,11 @@ pub enum Request {
     SetAutoAccept { device: String, on: bool },
     /// Ask a phone where it is; answers its position or why not (docs/protocol.md §4.14).
     Locate { device: String },
+    /// A device's audio as it is now: its outputs and the apps playing on them, with their
+    /// volumes (docs/protocol.md §4.5).
+    AudioState { device: String },
+    /// Change a device's audio: a volume, a mute, the default output, where an app plays.
+    AudioCommand { device: String, command: AudioCommand },
     /// This version, the newest one if it's newer, and whether Linksy checks.
     Updates,
     SetUpdatePrefs { prefs: UpdatePrefs },
@@ -597,6 +602,16 @@ impl Client {
         self.call(Request::Locate { device: device.into() }).await
     }
 
+    /// What a device's audio is now. The device must be connected or reachable, and speak
+    /// `audio_state`.
+    pub async fn audio_state(&self, device: impl Into<String>) -> Result<AudioState, ClientError> {
+        self.call(Request::AudioState { device: device.into() }).await
+    }
+
+    pub async fn audio_command(&self, device: impl Into<String>, command: AudioCommand) -> Result<(), ClientError> {
+        self.call(Request::AudioCommand { device: device.into(), command }).await
+    }
+
     pub async fn updates(&self) -> Result<UpdateInfo, ClientError> {
         self.call(Request::Updates).await
     }
@@ -717,5 +732,19 @@ mod tests {
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
         assert_eq!(back.id, 7);
         assert!(matches!(back.request, Request::EndTerminal { terminal } if terminal == "t1"));
+    }
+
+    #[test]
+    fn audio_requests_survive_the_envelope() {
+        // `command` (the audio command) sits beside the envelope's `id` and the request's `cmd`.
+        let command = AudioCommand::MoveStream { stream: "57".into(), sink: "hdmi".into() };
+        let env = Envelope { id: 9, request: Request::AudioCommand { device: "Phone".into(), command: command.clone() } };
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains(r#""cmd":"audio_command""#) && json.contains(r#""action":"move_stream""#), "{json}");
+        let back: Envelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, 9);
+        assert!(matches!(back.request, Request::AudioCommand { device, command: c } if device == "Phone" && c == command));
+        let state: Envelope = serde_json::from_str(r#"{"id":3,"cmd":"audio_state","device":"Phone"}"#).unwrap();
+        assert!(matches!(state.request, Request::AudioState { device } if device == "Phone"));
     }
 }

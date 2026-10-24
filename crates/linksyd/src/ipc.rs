@@ -248,6 +248,22 @@ async fn handle(node: &Node, history: &History, sessions: &Sessions, mirror: &Mi
             node.set_auto_accept(&id, on).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
+        Request::AudioState { device } => {
+            let id = resolve(node, &device)?;
+            let state = ask(node, || node.watch_audio(&id, true), AUDIO_WAIT, |e| match e {
+                Event::AudioState { from, state } if from.id == id => Some(state),
+                _ => None,
+            })
+            .await;
+            // One look is all that was asked for: don't leave the device sending.
+            let _ = node.watch_audio(&id, false).await;
+            serde_json::to_value(state?).map_err(|e| e.to_string())
+        }
+        Request::AudioCommand { device, command } => {
+            let id = resolve(node, &device)?;
+            node.audio_command(&id, command).await.map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }
         Request::Locate { device } => {
             let id = resolve(node, &device)?;
             let mut events = node.subscribe();
@@ -423,6 +439,9 @@ fn resolve_any(node: &Node, history: &History, target: &str) -> Result<Fingerpri
         history.list(None).into_iter().find(|h| h.peer.short().eq_ignore_ascii_case(t) || h.peer_name.eq_ignore_ascii_case(t)).map(|h| h.peer).ok_or(e)
     })
 }
+
+/// How long to wait for a device's answer about its audio.
+const AUDIO_WAIT: Duration = Duration::from_secs(10);
 
 /// How long to wait for a phone's answer about its texts.
 const SMS_WAIT: Duration = Duration::from_secs(15);

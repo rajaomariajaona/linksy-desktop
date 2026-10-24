@@ -2,6 +2,8 @@
 //! and shows native notifications. Front ends (the app, the `linksy` CLI) talk to it over
 //! a Unix socket and can come and go.
 
+#[cfg(target_os = "linux")]
+mod audio;
 mod clipboard;
 mod history;
 mod ipc;
@@ -22,6 +24,8 @@ mod dav;
 mod media;
 #[cfg(target_os = "linux")]
 mod notify;
+#[cfg(target_os = "linux")]
+mod pulse;
 mod system;
 #[cfg(target_os = "linux")]
 mod usb;
@@ -37,7 +41,7 @@ pub static QUIT: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// What a Linux computer running Linksy can do for other devices.
 const FEATURES: &[&str] = &[
-    "files", "clipboard", "open_url", "ring", "battery", "media_state", "media_remote", "call_state", "heartbeat",
+    "files", "clipboard", "open_url", "ring", "battery", "media_state", "media_remote", "audio_state", "audio_remote", "call_state", "heartbeat",
     "import", "fs", "input", "screen", "control", "display", "camera", "watch", "notifications", "sms",
     "clipboard_file", "microphone", "picture",
 ];
@@ -196,6 +200,8 @@ async fn main() -> ExitCode {
     let icons = linksy_ipc::runtime_dir().unwrap_or_else(std::env::temp_dir).join("linksy-icons");
     #[cfg(target_os = "linux")]
     tokio::spawn(media::run(node.clone(), icons.join("art")));
+    #[cfg(target_os = "linux")]
+    tokio::spawn(audio::run(node.clone()));
     let mirror = mirror::Mirror::load(data_dir.join("notifications.json"), icons, socket.clone());
     if args.notifications {
         tokio::spawn(mirror.clone().run(node.clone()));
